@@ -1,0 +1,589 @@
+#include <Keypad.h>
+#include <LiquidCrystal_I2C.h>
+
+const byte sensorEntrada = A1;
+const byte ledEntrada = 3;
+const byte sensorHabitacion = A2;
+const byte ledHabitacion = 5;
+const byte sensorCocina = A3;
+const byte ledCocina = 6;
+const byte alarma = 4;
+
+char tecla;
+
+bool alarmaAct = false;
+bool alarmaDisp = false;
+bool entradaAct = false;
+bool habitacionAct = false;
+bool cocinaAct = false;
+bool entradaEvent = false; 
+bool habitacionEvent = false;
+bool cocinaEvent = false;
+bool alarmaSonora = true;
+
+String eventos[10];
+int numEventos = 0;
+int eventoActual = 0;
+
+String pinGuardado = "0000";  // PIN por defecto
+String pinAux = "";
+bool solicitandoPin = false;
+bool cambiandoPin = false;
+
+
+//--------------------------------------CONFIG KEYPAD-------------------------------
+//Filas y columnas
+const byte filasKp = 4;
+const byte colsKp = 4;
+
+//Matriz 
+char teclas[filasKp][colsKp] =
+{
+  {'1','2','3','A'},
+  {'4','5','6','B'},
+  {'7','8','9','C'},
+  {'*','0','#','D'}
+};
+
+//Set de pines del arduino
+byte pinesFilas[filasKp] = {12, 11, 10, 9};
+byte pinesCols[colsKp] = {8, 7, 2, 1};
+
+//Creacion del keypad
+Keypad kp = Keypad(makeKeymap(teclas), pinesFilas, pinesCols, filasKp, colsKp);
+
+//-------------------------------------CONFIG DISPLAY-------------------------------
+//Filas y caracteres 
+const byte caractDisp = 16;
+const byte filasDisp = 2;
+
+//Creacion del display
+LiquidCrystal_I2C lcd(0x20, caractDisp, filasDisp);
+
+//-------------------------------------CONFIG MENU / CONFIG PIN--------------------------------
+
+enum menus {menuPrincipal, subMenu1, subMenu2, subMenu3, subMenu1_1, subMenu1_2, subMenu1_2_1, subMenu1_2_2, subMenu1_2_3, subMenu1_3};
+menus menuActual = menuPrincipal;
+menus menuAnterior = menuPrincipal; //guarda el menu previo para poder volver atras
+
+//Maneja la logica del menu y cada submenu segun las teclas presionadas
+void teclaPresionada(char tecla) {
+  
+  if (solicitandoPin) {//acciones cuando se solicita el pin al usuario
+    if (tecla >= '0' && tecla <= '9' && pinAux.length() < 4) {//verifica que las teclas pulsadas sean del 0 al 9 y las guarda hasta que sean 4 digitos
+      pinAux += tecla;
+
+    } else if (tecla == 'D' && pinAux.length() > 0) {//al pulsar la tecla D borra de a un digito
+      pinAux.remove(pinAux.length() - 1);
+
+    } else if (tecla == '#') {//al pulsar la tecla # segun corresponda:
+
+      if (pinAux == pinGuardado) {//sale del modo de escritura de pin
+        solicitandoPin = false;
+        pinAux = ""; //inicializa la variable auxiliar
+        
+        if (menuActual == subMenu2) {//activa, desactiva o detiene la alarma si esta en el menu de alarma
+          alarmaAct = !alarmaAct;
+          if (alarmaDisp) {
+            detener();
+          }
+          mostrarMenu(); 
+        } else if (menuActual == subMenu1_3) {//vuelve al submenu 1_3 a la espera de una accion del usuario
+          mostrarMenu(); 
+        }
+        
+      } else {//cualquier otro caso supone un ingreso incorrecto de pin y vuelve a solicitarlo
+        pinAux = "";
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("PIN incorrecto");
+        delay(1000);//muestra el mensaje durante 1 segundo
+        mostrarMenu(); 
+      }
+    }
+    return;
+  }
+
+  if (cambiandoPin) {//acciones cuando el usuario cambia el pin guardado
+    if (tecla >= '0' && tecla <= '9' && pinAux.length() < 4) {
+      pinAux += tecla;
+
+    } else if (tecla == 'D' && pinAux.length() > 0) {
+      pinAux.remove(pinAux.length() - 1);
+
+    } else if (tecla == '#') {
+      if (pinAux.length() == 4) {
+        pinGuardado = pinAux;//se guarda el pin que se ingresó en la variable auxiliar
+        cambiandoPin = false;
+        pinAux = "";
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("PIN cambiado");
+        delay(1000);//muestra el mensaje durante 1 segundo
+        mostrarMenu();
+      }
+    }
+    return;
+  }
+  
+  switch (menuActual) {
+    case menuPrincipal://menu principal
+      switch (tecla) {
+        case '1':
+          menuAnterior = menuActual;
+          menuActual = subMenu1;//ingresa al submenu 1 de configuracion
+          break;
+        case '2':
+          menuAnterior = menuActual;
+          menuActual = subMenu2;
+          solicitandoPin = true;//activa la solicitud de pin para cambiar el estado de la alarma y luego entra al submenu 2
+          break;
+        case '3':
+          menuAnterior = menuActual;
+          menuActual = subMenu3;//ingresa al submenu 3 de eventos
+          eventoActual = 0;//inicializa el contador de eventos para mostrarlos desde el principio
+          break;
+      }
+      break;
+      
+    case subMenu1:
+      switch (tecla) {
+        case '1':
+          menuAnterior = menuActual;
+          menuActual = subMenu1_1;//ingresa al submenu 1_1 de cambio de pin
+          break;
+        case '2':
+          menuAnterior = menuActual;
+          menuActual = subMenu1_2;//ingresa al submenu 1_2 de configuracion de sensores
+          break;
+        case '3':
+          menuAnterior = menuActual;
+          menuActual = subMenu1_3;
+          solicitandoPin = true;//activa la solicitud de pin para cambiar el modo de la alarma y luego entra al submenu 1_3 
+          break;
+        case 'C':
+          menuActual = menuPrincipal;//vuelve al menu principal
+          break;
+        case 'A':
+          menuActual = menuPrincipal;//vuelve al menu anterior
+          break;
+      }
+      break;
+    
+    case subMenu1_1://menu de pin
+      switch (tecla) {
+        case '1':
+          cambiandoPin = true; //activa el cambio de pin 
+          pinAux = ""; //inicializa variable auxiliar
+          break;
+        case 'C':
+          menuActual = menuPrincipal;//vuelve al menu principal
+          break;
+        case 'A':
+          menuActual = subMenu1;//vuelve al menu anterior
+          break;
+      }
+      break;
+
+    case subMenu1_2://menu de configuracion de sensores
+      switch (tecla) {
+        case '1':
+          menuAnterior = menuActual;
+          menuActual = subMenu1_2_1;//submenu 1_2_1 sensor de entrada
+          break;
+        case '2':
+          menuAnterior = menuActual;
+          menuActual = subMenu1_2_2;//submenu 1_2_2 sensor de habitacion
+          break;
+        case '3':
+          menuAnterior = menuActual;
+          menuActual = subMenu1_2_3;//submenu 1_2_3 sensor de cocina
+          break;
+        case 'C':
+          menuActual = menuPrincipal;//vuelve al menu principal
+          break;
+        case 'A':
+          menuActual = subMenu1;//vuelve al menu anterior
+          break;
+      }
+      break;
+
+    case subMenu1_2_1://menu de sensor de entrada
+      switch (tecla) {
+        case '#':
+          entradaAct = !entradaAct;//activa o desactiva el sensor segun corresponda
+          entradaEvent = false;//inicializa el contador de eventos
+          break;
+        case 'C':
+          menuActual = menuPrincipal;//vuelve al menu principal
+          break;
+        case 'A':
+          menuActual = subMenu1_2;//vuelve al menu anterior
+          break;
+      }
+    
+      if (entradaAct) {//si esta activado, enciende el led al 50%, de lo contrario esta apagado
+        analogWrite(ledEntrada, 127);//
+      } else {
+        analogWrite(ledEntrada, 0);
+      }
+        
+      break;
+
+    case subMenu1_2_2://menu de sensor de habitacion
+      switch (tecla) {
+        case '#':
+          habitacionAct = !habitacionAct;//activa o desactiva el sensor segun corresponda
+          habitacionEvent = false;//inicializa el contador de eventos
+          break;
+        case 'C':
+          menuActual = menuPrincipal;//vuelve al menu principal
+          break;
+        case 'A':
+          menuActual = subMenu1_2;//vuelve al menu anterior
+          break;
+      }
+           
+      if (habitacionAct) {//si esta activado, enciende el led al 50%, de lo contrario esta apagado
+        analogWrite(ledHabitacion, 127); 
+      } else {
+        analogWrite(ledHabitacion, 0);
+      }
+      break;
+
+    case subMenu1_2_3://menu de sensor de cocina
+      switch (tecla) {
+        case '#':
+          cocinaAct = !cocinaAct;//activa o desactiva el sensor segun corresponda
+          cocinaEvent = false;//inicializa el contador de eventos
+          break;
+        case 'C':
+          menuActual = menuPrincipal;//vuelve al menu principal
+          break;
+        case 'A':
+          menuActual = subMenu1_2;//vuelve al menu anterior
+          break;
+      }
+           
+      if (cocinaAct) {//si esta activado, enciende el led al 50%, de lo contrario esta apagado
+        analogWrite(ledCocina, 127); 
+      } else {
+        analogWrite(ledCocina, 0);
+      }
+      break;
+      
+    case subMenu2: //menu de alarma
+      switch (tecla) {
+        case '#':
+          alarmaAct = !alarmaAct;//activa o desactiva la alarma segun corresponda
+          if (alarmaDisp) {//si la alarma fue disparada, la detiene
+            detener();
+          }
+          break;
+        case 'C':
+          menuActual = menuPrincipal;//vuelve al menu principal
+          break;
+        case 'A':
+          menuActual = menuPrincipal;//vuelve al menu anterior
+          break;
+      }
+      break;
+      
+    case subMenu3: //menu de eventos
+      switch (tecla) {
+        case '1': 
+          if (eventoActual < numEventos - 1) {//muestra el evento siguiente al pulsar la tecla 1 hasta llegar al ultimo
+            eventoActual++;
+          }
+          break;
+        case 'C':
+          menuActual = menuPrincipal;//vuelve al menu principal
+          break;
+        case 'A':
+          menuActual = menuPrincipal;//vuelve al menu anterior
+          break;
+      }
+      break;
+      
+    case subMenu1_3: //menu de modo de alarma (sonora o silenciosa)
+      switch (tecla) {
+        case '#': 
+          alarmaSonora = !alarmaSonora;//cambia el modo segun corresponda
+          break;
+        case 'C':
+          menuActual = menuPrincipal;//vuelve al menu principal
+          break;
+        case 'A':
+          menuActual = subMenu1;//vuelve al menu anterior
+          break;
+      }
+      break;
+  }
+  
+  mostrarMenu();
+}
+
+//Muestra los menus en el display segun la logica de la funcion previa
+void mostrarMenu() {
+  lcd.clear();
+  
+  if (solicitandoPin) {//vista de solicitud de pin
+    lcd.setCursor(0, 0);
+    lcd.print("Ingrese PIN:");
+    lcd.setCursor(0, 1);
+    lcd.print(pinAux);
+    return;
+  }
+
+  if (cambiandoPin) {//vista de cambio de pin
+    lcd.setCursor(0, 0);
+    lcd.print("Nuevo PIN:");
+    lcd.setCursor(0, 1);
+    lcd.print(pinAux);
+    return;
+  }
+  
+  switch (menuActual) {
+    case menuPrincipal://vista del menu principal
+      lcd.setCursor(0, 0);
+      lcd.print("1.Config.2.Alarm");
+      lcd.setCursor(0, 1);
+      lcd.print("3.Eventos");
+      break;
+      
+    case subMenu1://vista del menu configuracion
+      lcd.setCursor(0, 0);
+      lcd.print("1.PIN  2.Sensor");
+      lcd.setCursor(0, 1);
+      lcd.print("3.Modo A.Volver");
+      break;
+      
+    case subMenu2://vista del menu alarma
+      lcd.setCursor(0, 0);
+      lcd.print("Alarma: ");
+      lcd.print(alarmaAct ? "ON" : "OFF");
+      lcd.setCursor(0, 1);
+      lcd.print("#.Cambiar A.Volver");
+      break;
+      
+    case subMenu3://vista del menu de eventos
+      lcd.setCursor(0, 0);
+      if (numEventos > 0) {
+        lcd.print("Evento ");
+        lcd.print(eventoActual + 1);//numero de evento
+        lcd.print(":");
+        lcd.setCursor(0, 1);
+        lcd.print(eventos[eventoActual]);//evento
+      } else {
+        lcd.print("No hay eventos");
+      }
+      break;
+
+    case subMenu1_1://vista del menu de cambio de pin
+      lcd.setCursor(0, 0);
+      lcd.print("1.Cambiar PIN");
+      lcd.setCursor(0, 1);
+      lcd.print("A.Volver");
+      break;
+
+    case subMenu1_2://vista del menu de sensores
+      lcd.setCursor(0, 0);
+      lcd.print("1.Entr  2.Habit");
+      lcd.setCursor(0, 1);
+      lcd.print("3.Coc  A.Volver");
+      break;
+
+    case subMenu1_2_1://vista del sensor de entrada
+      lcd.setCursor(0, 0);
+      lcd.print("Entrada: ");
+      lcd.print(entradaAct ? "ON" : "OFF");
+      lcd.setCursor(0, 1);
+      lcd.print("#.Cambiar A.Volver");
+      break;
+
+    case subMenu1_2_2://vista del sensor de habitacion
+      lcd.setCursor(0, 0);
+      lcd.print("Habitacion: ");
+      lcd.print(habitacionAct ? "ON" : "OFF");
+      lcd.setCursor(0, 1);
+      lcd.print("#.Cambiar A.Volver");
+      break;
+
+    case subMenu1_2_3://vista del sensor de cocina
+      lcd.setCursor(0, 0);
+      lcd.print("Cocina: ");
+      lcd.print(cocinaAct ? "ON" : "OFF");
+      lcd.setCursor(0, 1);
+      lcd.print("#.Cambiar A.Volver");
+      break;
+
+    case subMenu1_3://vista del menu de modo de alarma
+      lcd.setCursor(0, 0);
+      lcd.print("Alarma ");
+      lcd.print(alarmaSonora ? "Sonora" : "Silenc.");
+      lcd.setCursor(0, 1);
+      lcd.print("#.Cambiar A.Volver");
+      break;
+  }
+}
+
+//-------------------------------------CONFIG EVENTOS--------------------------------
+
+
+void registrarEvento(String evento) {//guarda el evento en la lista de eventos
+  if (numEventos < 10) {
+    eventos[numEventos] = evento;
+    numEventos++;
+  } else {//sobreescribe eventos al llenarse la lista de 10
+    for (int i = 1; i < 10; i++) {
+      eventos[i - 1] = eventos[i];
+    }
+    eventos[10 - 1] = evento;
+  }
+}
+
+//-------------------------------------CONFIG SENSORES--------------------------------
+
+//cada funcion devuelve true si dicho sensor detecta movimiento a menos de un metro
+
+bool entrada() {//sensor de entrada
+  long duracion, cm;
+
+  //envio de pulso
+  pinMode(sensorEntrada, OUTPUT);
+  digitalWrite(sensorEntrada, LOW);
+  delayMicroseconds(2);
+  digitalWrite(sensorEntrada, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(sensorEntrada, LOW);
+
+  //lectura de pulso
+  pinMode(sensorEntrada, INPUT);
+  duracion = pulseIn(sensorEntrada, HIGH);
+
+  //calculo de distancia segun la demora del pulso
+  cm = (duracion/29/2);
+  delay(100);
+  
+  if(cm < 100){
+    analogWrite(ledEntrada, 255);//led al 100%
+    if (!entradaEvent) { //se registra solo si es false para no repetirlo el tiempo que el sensor detecte movimiento
+      registrarEvento("Mov. en Entrada");
+      entradaEvent = true;
+    }
+    return true;
+  }  
+  entradaEvent = false;
+  analogWrite(ledEntrada, 127);//led vuelve al 50% cuando deja de registrarse movimiento
+  return false;
+}
+
+bool habitacion() {//sensor de habitacion
+  long duracion, cm;
+
+  //envio de pulso
+  pinMode(sensorHabitacion, OUTPUT);
+  digitalWrite(sensorHabitacion, LOW);
+  delayMicroseconds(2);
+  digitalWrite(sensorHabitacion, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(sensorHabitacion, LOW);
+
+  //lectura de pulso
+  pinMode(sensorHabitacion, INPUT);
+  duracion = pulseIn(sensorHabitacion, HIGH);
+
+  //calculo de distancia segun la demora del pulso
+  cm = (duracion/29/2);
+  delay(100);
+  
+  if(cm < 100){
+    analogWrite(ledHabitacion, 255);//led al 100%   
+    if (!habitacionEvent) { //se registra solo si es false para no repetirlo el tiempo que el sensor detecte movimiento
+      registrarEvento("Mov. en Habit.");
+      habitacionEvent = true;
+    }
+    return true;
+  }
+  habitacionEvent = false;
+  analogWrite(ledHabitacion, 127);//led vuelve al 50% cuando deja de registrarse movimiento
+  return false; 
+}
+
+bool cocina() {//sensor de cocina
+  long duracion, cm;
+
+  //envio de pulso
+  pinMode(sensorCocina, OUTPUT);
+  digitalWrite(sensorCocina, LOW);
+  delayMicroseconds(2);
+  digitalWrite(sensorCocina, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(sensorCocina, LOW);
+
+  //lectura de pulso
+  pinMode(sensorCocina, INPUT);
+  duracion = pulseIn(sensorCocina, HIGH);
+
+  //calculo de distancia segun la demora del pulso
+  cm = (duracion/29/2);
+  delay(100);
+  
+  if(cm < 100){
+    analogWrite(ledCocina, 255);//led al 100%
+    if (!cocinaEvent) { //se registra solo si es false para no repetirlo el tiempo que el sensor detecte movimiento
+      registrarEvento("Mov. en Cocina");
+      cocinaEvent = true; 
+    }
+    return true;
+  }
+  cocinaEvent = false; 
+  analogWrite(ledCocina, 127);//led vuelve al 50% cuando deja de registrarse movimiento
+  return false;
+}
+
+//-------------------------------------CONFIG SIRENA--------------------------------
+
+void disparo() {
+  if (alarmaSonora) {
+    digitalWrite(alarma, HIGH);//solo suena si el modo sonora esta activado
+  }
+  alarmaDisp = true;
+}
+
+void detener() {
+  digitalWrite(alarma, LOW);
+  alarmaDisp = false;
+}
+
+
+//----------------------------------------------------------------------------------
+
+void setup() {  
+  lcd.init();
+  lcd.backlight();
+  
+  pinMode(ledEntrada, OUTPUT);
+  pinMode(ledHabitacion, OUTPUT);
+  pinMode(ledCocina, OUTPUT);
+  pinMode(alarma, OUTPUT);
+
+  tecla = 'C';
+  mostrarMenu();//muestra el menu principal al iniciar
+ 
+}
+
+void loop() {
+  
+  tecla = kp.getKey();
+  if (tecla) {//actualiza el menú en el display
+    teclaPresionada(tecla);
+    mostrarMenu(); 
+  }
+  
+  if (alarmaAct) {//chequea si algun sensor devuelve true, pero teneindo en cuenta si esta activado y si la alarma esta activada
+    if ((entradaAct && entrada()) || (habitacionAct && habitacion()) || (cocinaAct && cocina())) {
+      disparo();
+    } 
+  }
+}
